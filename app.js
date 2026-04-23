@@ -8,6 +8,7 @@ const CM_PER_IN = 2.54;
 // ---------- DOM shortcuts ----------
 const $ = (id) => document.getElementById(id);
 const canvas = $('canvas');
+const bgLayer = $('bgLayer');
 const gridLayer = $('gridLayer');
 const roomsLayer = $('roomsLayer');
 const itemsLayer = $('itemsLayer');
@@ -43,6 +44,7 @@ function defaultState() {
     units: 'imperial',
     rooms: [],
     items: [],
+    bg: null, // { url, x, y, w, h, opacity }
   };
 }
 
@@ -312,12 +314,29 @@ function uid() { return Math.random().toString(36).slice(2, 9); }
 // ---------- Rendering ----------
 function renderAll() {
   applyCamera();
+  renderBackground();
   renderRooms();
   renderItems();
   renderHandles();
   renderSidebar();
   $('planName').value = state.name || '';
   $('units').value = state.units;
+}
+
+function renderBackground() {
+  clear(bgLayer);
+  const bg = state.bg;
+  if (!bg || !bg.url) return;
+  const img = document.createElementNS(SVGNS, 'image');
+  img.setAttribute('href', bg.url);
+  img.setAttribute('x', bg.x);
+  img.setAttribute('y', bg.y);
+  img.setAttribute('width', Math.max(1, bg.w));
+  img.setAttribute('height', Math.max(1, bg.h));
+  img.setAttribute('opacity', bg.opacity);
+  img.setAttribute('preserveAspectRatio', 'none');
+  img.style.pointerEvents = 'none'; // never absorbs clicks; rooms/items stay interactive
+  bgLayer.appendChild(img);
 }
 
 function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); }
@@ -1260,6 +1279,77 @@ for (const btn of document.querySelectorAll('.tool')) {
 }
 $('addRoomBtn').addEventListener('click', () => setTool('room'));
 $('helpBtn').addEventListener('click', () => $('helpDialog').showModal());
+
+// ---------- Background image ----------
+$('bgBtn').addEventListener('click', () => {
+  $('bgError').hidden = true;
+  const bg = state.bg;
+  if (bg) {
+    $('bgUrl').value = bg.url || '';
+    $('bgX').value = formatLen(bg.x);
+    $('bgY').value = formatLen(bg.y);
+    $('bgW').value = formatLen(bg.w);
+    $('bgH').value = formatLen(bg.h);
+    $('bgOpacity').value = String(bg.opacity);
+  } else {
+    $('bgUrl').value = '';
+    $('bgX').value = '0';
+    $('bgY').value = '0';
+    $('bgW').value = '';
+    $('bgH').value = '';
+    $('bgOpacity').value = '0.5';
+  }
+  $('bgDialog').showModal();
+});
+
+// When a URL is entered with empty size fields, probe the image's natural
+// dimensions so we can size it at a sensible default (fits ~80% of viewport).
+$('bgUrl').addEventListener('change', () => {
+  const url = $('bgUrl').value.trim();
+  if (!url) return;
+  if ($('bgW').value.trim() && $('bgH').value.trim()) return;
+  const probe = new Image();
+  probe.crossOrigin = 'anonymous'; // helps some hosts; harmless for most
+  probe.onload = () => {
+    const r = canvas.getBoundingClientRect();
+    const worldW = r.width / camera.scale;
+    const w = worldW * 0.7;
+    const h = w * (probe.naturalHeight / probe.naturalWidth);
+    const c = screenToWorld(r.width / 2, r.height / 2);
+    $('bgW').value = formatLen(w);
+    $('bgH').value = formatLen(h);
+    if (!$('bgX').value.trim() || $('bgX').value === '0') $('bgX').value = formatLen(c.x - w / 2);
+    if (!$('bgY').value.trim() || $('bgY').value === '0') $('bgY').value = formatLen(c.y - h / 2);
+  };
+  probe.onerror = () => {
+    $('bgError').textContent = "Couldn't load that URL — check it's a direct link to an image and the host allows hotlinking.";
+    $('bgError').hidden = false;
+  };
+  probe.src = url;
+});
+
+$('bgDialog').addEventListener('close', () => {
+  const rv = $('bgDialog').returnValue;
+  if (rv === 'cancel' || rv === '') return;
+  pushUndo();
+  if (rv === 'remove') {
+    state.bg = null;
+  } else if (rv === 'ok') {
+    const url = $('bgUrl').value.trim();
+    if (!url) { state.bg = null; }
+    else {
+      state.bg = {
+        url,
+        x: parseLen($('bgX').value) || 0,
+        y: parseLen($('bgY').value) || 0,
+        w: Math.max(1, parseLen($('bgW').value) || 100),
+        h: Math.max(1, parseLen($('bgH').value) || 100),
+        opacity: Math.min(1, Math.max(0, parseFloat($('bgOpacity').value))) || 0.5,
+      };
+    }
+  }
+  renderAll(); persist();
+});
 for (const btn of document.querySelectorAll('.preset')) {
   btn.addEventListener('click', () => { addItemFromPreset(btn.dataset.preset); closeAddMenu(); });
 }
@@ -1486,6 +1576,16 @@ function normalizeState(s) {
     const r = Number(it.rotation);
     it.rotation = Number.isFinite(r) ? r : 0;
     if (it.shape === 'door' && typeof it.flip !== 'boolean') it.flip = false;
+  }
+  if (s.bg && typeof s.bg === 'object') {
+    if (!s.bg.url) s.bg = null;
+    else {
+      s.bg.x = Number(s.bg.x) || 0;
+      s.bg.y = Number(s.bg.y) || 0;
+      s.bg.w = Number(s.bg.w) || 100;
+      s.bg.h = Number(s.bg.h) || 100;
+      s.bg.opacity = Number.isFinite(Number(s.bg.opacity)) ? Math.min(1, Math.max(0, Number(s.bg.opacity))) : 0.5;
+    }
   }
   return s;
 }
