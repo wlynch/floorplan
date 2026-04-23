@@ -168,12 +168,21 @@ function pointerWorld(e) {
   const r = canvas.getBoundingClientRect();
   return screenToWorld(e.clientX - r.left, e.clientY - r.top);
 }
+let lastAppliedScale = -1;
 function applyCamera() {
   worldG.setAttribute('transform', `translate(${camera.tx},${camera.ty}) scale(${camera.scale})`);
   $('zoomLabel').textContent = Math.round(camera.scale / 4 * 100) + '%'; // 4 px/in = 100%
   renderGrid();
   renderRulers();
   renderHandles();
+  // Labels on rooms/items set their font-size inline from camera.scale at
+  // render time, so we must re-render those layers whenever the zoom changes;
+  // otherwise fonts stay at the previous scale until another draw touches them.
+  if (lastAppliedScale !== camera.scale) {
+    lastAppliedScale = camera.scale;
+    renderRooms();
+    renderItems();
+  }
 }
 
 function snapV(v) {
