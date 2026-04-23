@@ -76,6 +76,7 @@ html, body { display: flex; flex-direction: column; }
 .muted kbd { background: #eef1f5; border-radius: 3px; padding: 1px 5px; font-size: 11px; border: 1px solid #d9dee7; }
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .actions { display: flex; gap: 6px; margin-top: 6px; }
+.actions[hidden] { display: none; }
 .actions button { flex: 1; }
 .plan-meta { margin-top: 10px; }
 
