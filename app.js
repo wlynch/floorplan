@@ -1332,7 +1332,7 @@ function zoomAt(factor) {
   applyCamera(); renderHandles();
 }
 
-function fitToContent() {
+function fitToContent(maxScale = Infinity) {
   const all = [...state.rooms, ...state.items];
   if (!all.length) {
     camera = { scale: 4, tx: 80, ty: 80 };
@@ -1349,10 +1349,11 @@ function fitToContent() {
   const availW = r.width - pad * 2;
   const availH = r.height - pad * 2;
   const bw = maxX - minX, bh = maxY - minY;
-  const scale = Math.min(availW / Math.max(bw, 1), availH / Math.max(bh, 1));
-  camera.scale = Math.min(40, Math.max(0.5, scale));
-  camera.tx = pad - minX * camera.scale;
-  camera.ty = pad - minY * camera.scale;
+  const fitScale = Math.min(availW / Math.max(bw, 1), availH / Math.max(bh, 1));
+  camera.scale = Math.min(40, Math.max(0.5, Math.min(fitScale, maxScale)));
+  // Center the content within the viewport at whatever scale was chosen.
+  camera.tx = r.width / 2 - ((minX + maxX) / 2) * camera.scale;
+  camera.ty = r.height / 2 - ((minY + maxY) / 2) * camera.scale;
   applyCamera(); renderHandles();
 }
 
@@ -1512,4 +1513,7 @@ async function loadInitial() {
   bindSidebar();
   window.addEventListener('resize', () => { applyCamera(); renderHandles(); });
   renderAll();
+  // Initial camera: fit content, capped at 100% (scale=4). Large plans zoom out
+  // to fit; small plans stay at 100% instead of being blown up.
+  if (state.rooms.length || state.items.length) fitToContent(4);
 })();
