@@ -132,7 +132,10 @@
 <dialog id="importDialog">
   <form method="dialog">
     <h3>Import plan</h3>
-    <p class="muted">Paste a shared URL, a base64 string, or raw JSON.</p>
+    <p class="muted">Choose a <code>.json</code> file, or paste a shared URL / base64 / raw JSON.</p>
+    <label class="file-row">
+      <input type="file" id="importFile" accept=".json,application/json" />
+    </label>
     <textarea id="importText" rows="8" placeholder="https://...#AbC... or {&quot;rooms&quot;:...}"></textarea>
     <menu>
       <button value="cancel">Cancel</button>
