@@ -1316,7 +1316,20 @@ $('export').addEventListener('click', () => {
   URL.revokeObjectURL(a.href);
 });
 
-$('import').addEventListener('click', () => { $('importText').value = ''; $('importDialog').showModal(); });
+$('import').addEventListener('click', () => {
+  $('importText').value = '';
+  $('importFile').value = '';
+  $('importDialog').showModal();
+});
+$('importFile').addEventListener('change', async (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  try {
+    $('importText').value = await file.text();
+  } catch (err) {
+    alert('Could not read file: ' + err.message);
+  }
+});
 $('importDialog').addEventListener('close', async () => {
   if ($('importDialog').returnValue !== 'ok') return;
   const txt = $('importText').value.trim();
