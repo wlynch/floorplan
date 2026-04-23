@@ -49,8 +49,9 @@ function defaultState() {
 }
 
 let state = defaultState();
-let selected = null; // {kind: 'room'|'item', id}
-let tool = 'select';
+let selected = null;  // single selection: {kind, id} | null
+let multiSel = [];    // rubber-band multi-selection: [{kind, id}, ...]
+let tool = 'pan';     // default: pan view; explicit tool switch required to edit
 let snap = true;
 let camera = { scale: 4, tx: 80, ty: 80 }; // px per inch, translation in px
 let undoStack = [];
@@ -281,6 +282,40 @@ function renderSnapGuides() {
 }
 
 function clearSnapGuides() { activeSnapGuides = []; clear(overlayLayer); }
+
+function renderRubberBand(a, b) {
+  clear(overlayLayer);
+  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+  const w = Math.abs(a.x - b.x), h = Math.abs(a.y - b.y);
+  const rect = document.createElementNS(SVGNS, 'rect');
+  rect.setAttribute('x', x); rect.setAttribute('y', y);
+  rect.setAttribute('width', w); rect.setAttribute('height', h);
+  rect.setAttribute('fill', 'rgba(61,110,245,0.10)');
+  rect.setAttribute('stroke', '#3d6ef5');
+  rect.setAttribute('stroke-width', '1');
+  rect.setAttribute('stroke-dasharray', '5 4');
+  rect.setAttribute('vector-effect', 'non-scaling-stroke');
+  overlayLayer.appendChild(rect);
+}
+
+function commitRubberBand(a, b) {
+  const rx1 = Math.min(a.x, b.x), rx2 = Math.max(a.x, b.x);
+  const ry1 = Math.min(a.y, b.y), ry2 = Math.max(a.y, b.y);
+  const picked = [];
+  for (const r of state.rooms) {
+    if (r.x < rx2 && r.x + r.w > rx1 && r.y < ry2 && r.y + r.h > ry1) {
+      picked.push({ kind: 'room', id: r.id });
+    }
+  }
+  for (const it of state.items) {
+    const bb = itemVisualBBox(it);
+    if (bb.x < rx2 && bb.x + bb.w > rx1 && bb.y < ry2 && bb.y + bb.h > ry1) {
+      picked.push({ kind: 'item', id: it.id });
+    }
+  }
+  if (picked.length === 1) { selected = picked[0]; multiSel = []; }
+  else { selected = null; multiSel = picked; }
+}
 
 // ---------- Undo / history ----------
 function snapshot() {
@@ -672,13 +707,31 @@ function rotatePoint(x, y, cx, cy, deg) {
   return { x: cx + dx * Math.cos(rad) - dy * Math.sin(rad), y: cy + dx * Math.sin(rad) + dy * Math.cos(rad) };
 }
 
-function isSelected(kind, id) { return selected && selected.kind === kind && selected.id === id; }
+function isSelected(kind, id) {
+  if (multiSel.length) return multiSel.some(s => s.kind === kind && s.id === id);
+  return selected && selected.kind === kind && selected.id === id;
+}
 
 function getSelected() {
+  if (multiSel.length) return null;
   if (!selected) return null;
   const arr = selected.kind === 'room' ? state.rooms : state.items;
   return arr.find(o => o.id === selected.id);
 }
+
+// Returns [{ kind, obj }] for every currently-selected object (single or multi).
+function getSelectedAll() {
+  const refs = multiSel.length ? multiSel : (selected ? [selected] : []);
+  const out = [];
+  for (const s of refs) {
+    const arr = s.kind === 'room' ? state.rooms : state.items;
+    const obj = arr.find(o => o.id === s.id);
+    if (obj) out.push({ kind: s.kind, obj });
+  }
+  return out;
+}
+
+function clearSelection() { selected = null; multiSel = []; }
 
 // ---------- Sidebar ----------
 let drawerOpen = false;
@@ -691,19 +744,27 @@ function renderSidebar() {
   renderingSidebar = true;
   try {
     const o = getSelected();
+    const hasAny = !!o || multiSel.length > 0;
     const emptyPanel = $('emptyPanel');
     const propsPanel = $('propsPanel');
     const selActions = $('selectionActions');
-    selActions.hidden = !o;
-    if (selActions && o) {
-      // rotate only makes sense for items
-      $('rotateBtn').hidden = selected.kind !== 'item';
+    selActions.hidden = !hasAny;
+    if (hasAny) {
+      // Rotate only meaningful when at least one selected object is an item.
+      const anyItem = (o && selected.kind === 'item') ||
+                      multiSel.some(s => s.kind === 'item');
+      $('rotateBtn').hidden = !anyItem;
+      // Details only applies to a single selection (multi has no single dimensions).
+      $('detailsBtn').hidden = !o;
     }
-    // Deselection always closes the mobile drawer.
-    if (!o && drawerOpen) setDrawerOpen(false);
+    // Closing/deselecting always dismisses the mobile drawer.
+    if (!hasAny && drawerOpen) setDrawerOpen(false);
     if (!o) {
+      // No single selection → show empty/multi panel. Props panel requires
+      // a single object (dimensions aren't meaningful for a multi-select set).
       emptyPanel.hidden = false;
       propsPanel.hidden = true;
+      if (multiSel.length > 0 && drawerOpen) setDrawerOpen(false);
       return;
     }
     emptyPanel.hidden = true;
@@ -771,15 +832,7 @@ function bindSidebar() {
       if (newShape !== 'door') delete o.flip;
     }
   });
-  $('duplicate').addEventListener('click', () => {
-    const o = getSelected();
-    if (!o) return;
-    pushUndo();
-    const copy = { ...o, id: uid(), x: o.x + 12, y: o.y + 12 };
-    if (selected.kind === 'room') state.rooms.push(copy); else state.items.push(copy);
-    selected = { kind: selected.kind, id: copy.id };
-    renderAll(); persist();
-  });
+  $('duplicate').addEventListener('click', duplicateSelected);
   $('flipDoor').addEventListener('click', () => {
     const o = getSelected();
     if (!o || o.shape !== 'door') return;
@@ -791,14 +844,8 @@ function bindSidebar() {
   $('sidebarClose').addEventListener('click', () => { selected = null; renderAll(); });
   // Top-bar selection actions mirror the sidebar actions so users don't need
   // to open the drawer for simple rotate/duplicate/delete edits.
-  $('rotateBtn').addEventListener('click', () => {
-    if (!selected || selected.kind !== 'item') return;
-    pushUndo();
-    const o = getSelected();
-    o.rotation = ((Number(o.rotation) || 0) + 90) % 360;
-    renderAll(); persist();
-  });
-  $('duplicateBtn').addEventListener('click', () => $('duplicate').click());
+  $('rotateBtn').addEventListener('click', rotateSelectedItems);
+  $('duplicateBtn').addEventListener('click', duplicateSelected);
   $('deleteBtn').addEventListener('click', deleteSelected);
   $('detailsBtn').addEventListener('click', () => setDrawerOpen(true));
   $('planName').addEventListener('change', () => { state.name = $('planName').value; persist(); });
@@ -811,11 +858,39 @@ function bindSidebar() {
 }
 
 function deleteSelected() {
-  if (!selected) return;
+  const sels = getSelectedAll();
+  if (!sels.length) return;
   pushUndo();
-  if (selected.kind === 'room') state.rooms = state.rooms.filter(r => r.id !== selected.id);
-  else state.items = state.items.filter(r => r.id !== selected.id);
-  selected = null;
+  const rmRoom = new Set(sels.filter(s => s.kind === 'room').map(s => s.obj.id));
+  const rmItem = new Set(sels.filter(s => s.kind === 'item').map(s => s.obj.id));
+  if (rmRoom.size) state.rooms = state.rooms.filter(r => !rmRoom.has(r.id));
+  if (rmItem.size) state.items = state.items.filter(r => !rmItem.has(r.id));
+  clearSelection();
+  renderAll(); persist();
+}
+
+function duplicateSelected() {
+  const sels = getSelectedAll();
+  if (!sels.length) return;
+  pushUndo();
+  const newSel = [];
+  for (const { kind, obj } of sels) {
+    const copy = { ...obj, id: uid(), x: obj.x + 12, y: obj.y + 12 };
+    if (kind === 'room') state.rooms.push(copy); else state.items.push(copy);
+    newSel.push({ kind, id: copy.id });
+  }
+  if (newSel.length === 1) { selected = newSel[0]; multiSel = []; }
+  else { selected = null; multiSel = newSel; }
+  renderAll(); persist();
+}
+
+function rotateSelectedItems() {
+  const items = getSelectedAll().filter(s => s.kind === 'item');
+  if (!items.length) return;
+  pushUndo();
+  for (const { obj } of items) {
+    obj.rotation = ((Number(obj.rotation) || 0) + 90) % 360;
+  }
   renderAll(); persist();
 }
 
@@ -988,9 +1063,10 @@ function onPointerDown(e) {
     return;
   }
 
-  // select tool — start interactions in a "pending" state so tiny finger wiggles
-  // don't accidentally move the object or pan the view.
+  // Select tool — pending states so a quick tap never modifies or drifts.
   if (hit) {
+    // Single-click replaces any multi-selection and single-selects.
+    multiSel = [];
     selected = { kind: hit.kind, id: hit.obj.id };
     interaction = {
       kind: 'pending-move',
@@ -1000,11 +1076,15 @@ function onPointerDown(e) {
     };
     renderAll();
   } else {
+    // Drag from empty canvas → rubber-band multi-select. (Pan is on the Pan
+    // tool, middle-drag, or Space+drag — this keeps Select strictly for
+    // editing.)
     selected = null;
+    multiSel = [];
     interaction = {
-      kind: 'pending-pan',
+      kind: 'pending-rubber',
       startX: e.clientX, startY: e.clientY,
-      tx0: camera.tx, ty0: camera.ty,
+      startWorld: p,
     };
     renderAll();
   }
@@ -1042,6 +1122,16 @@ function onPointerMove(e) {
     if (dd < moveThresholdPx()) return;
     interaction.kind = 'pan';
     canvas.classList.add('panning');
+  } else if (interaction.kind === 'pending-rubber') {
+    const dd = Math.hypot(e.clientX - interaction.startX, e.clientY - interaction.startY);
+    if (dd < moveThresholdPx()) return;
+    interaction = { kind: 'rubber', startWorld: interaction.startWorld, endWorld: p };
+  }
+
+  if (interaction.kind === 'rubber') {
+    interaction.endWorld = p;
+    renderRubberBand(interaction.startWorld, interaction.endWorld);
+    return;
   }
 
   if (interaction.kind === 'pan') {
@@ -1175,6 +1265,9 @@ function onPointerUp(e) {
     }
     setTool('select');
   }
+  if (interaction.kind === 'rubber') {
+    commitRubberBand(interaction.startWorld, interaction.endWorld);
+  }
   interaction = null;
   canvas.classList.remove('panning');
   clearSnapGuides();
@@ -1280,15 +1373,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key === '1') { setTool('select'); return; }
   if (e.key === '2') { setTool('pan'); return; }
   if (e.key === '3') { setTool('measure'); return; }
-  if (e.key === '4') {
-    if (selected && selected.kind === 'item') {
-      pushUndo();
-      const o = getSelected();
-      o.rotation = ((Number(o.rotation) || 0) + 90) % 360;
-      renderAll(); persist();
-    }
-    return;
-  }
+  if (e.key === '4') { rotateSelectedItems(); return; }
   if (e.key === 'Escape') {
     if (calibrateState) { cancelCalibrate(); return; }
     setTool('select'); selected = null; measureStart = null; clear(measureLayer); renderAll(); return;
@@ -1701,6 +1786,7 @@ async function loadInitial() {
   await loadInitial();
   snap = $('snap').checked;
   bindSidebar();
+  setTool('pan');
   window.addEventListener('resize', () => { applyCamera(); renderHandles(); });
   renderAll();
   // Initial camera: fit content, capped at 100% (scale=4). Large plans zoom out
