@@ -653,13 +653,26 @@ function getSelected() {
 }
 
 // ---------- Sidebar ----------
+let drawerOpen = false;
+function setDrawerOpen(open) {
+  drawerOpen = open;
+  document.body.classList.toggle('props-open', drawerOpen);
+}
+
 function renderSidebar() {
   renderingSidebar = true;
   try {
     const o = getSelected();
     const emptyPanel = $('emptyPanel');
     const propsPanel = $('propsPanel');
-    document.body.classList.toggle('props-open', !!o);
+    const selActions = $('selectionActions');
+    selActions.hidden = !o;
+    if (selActions && o) {
+      // rotate only makes sense for items
+      $('rotateBtn').hidden = selected.kind !== 'item';
+    }
+    // Deselection always closes the mobile drawer.
+    if (!o && drawerOpen) setDrawerOpen(false);
     if (!o) {
       emptyPanel.hidden = false;
       propsPanel.hidden = true;
@@ -748,6 +761,18 @@ function bindSidebar() {
   });
   $('remove').addEventListener('click', deleteSelected);
   $('sidebarClose').addEventListener('click', () => { selected = null; renderAll(); });
+  // Top-bar selection actions mirror the sidebar actions so users don't need
+  // to open the drawer for simple rotate/duplicate/delete edits.
+  $('rotateBtn').addEventListener('click', () => {
+    if (!selected || selected.kind !== 'item') return;
+    pushUndo();
+    const o = getSelected();
+    o.rotation = ((Number(o.rotation) || 0) + 90) % 360;
+    renderAll(); persist();
+  });
+  $('duplicateBtn').addEventListener('click', () => $('duplicate').click());
+  $('deleteBtn').addEventListener('click', deleteSelected);
+  $('detailsBtn').addEventListener('click', () => setDrawerOpen(true));
   $('planName').addEventListener('change', () => { state.name = $('planName').value; persist(); });
   $('units').addEventListener('change', () => {
     pushUndo();
@@ -913,21 +938,30 @@ function onPointerDown(e) {
     return;
   }
 
-  // select tool
+  // select tool — start interactions in a "pending" state so tiny finger wiggles
+  // don't accidentally move the object or pan the view.
   if (hit) {
     selected = { kind: hit.kind, id: hit.obj.id };
-    pushUndo();
-    interaction = { kind: 'move', orig: { ...hit.obj }, startWorld: p };
+    interaction = {
+      kind: 'pending-move',
+      orig: { ...hit.obj },
+      startWorld: p,
+      startClientX: e.clientX, startClientY: e.clientY,
+    };
     renderAll();
   } else {
-    // Empty canvas drag — pan (Figma/Google Maps convention). On macOS with
-    // "Three-finger drag" enabled in Accessibility, this is how 3-finger swipes
-    // become panning.
     selected = null;
-    interaction = { kind: 'pan', startX: e.clientX, startY: e.clientY, tx0: camera.tx, ty0: camera.ty };
-    canvas.classList.add('panning');
+    interaction = {
+      kind: 'pending-pan',
+      startX: e.clientX, startY: e.clientY,
+      tx0: camera.tx, ty0: camera.ty,
+    };
     renderAll();
   }
+}
+
+function moveThresholdPx() {
+  return matchMedia('(pointer: coarse)').matches ? 10 : 3;
 }
 
 function onPointerMove(e) {
@@ -945,6 +979,20 @@ function onPointerMove(e) {
   }
 
   if (!interaction) return;
+
+  // Promote pending interactions to real ones only after a threshold distance.
+  // Below that, the gesture is treated as a tap/click.
+  if (interaction.kind === 'pending-move') {
+    const dd = Math.hypot(e.clientX - interaction.startClientX, e.clientY - interaction.startClientY);
+    if (dd < moveThresholdPx()) return;
+    pushUndo();
+    interaction = { kind: 'move', orig: interaction.orig, startWorld: interaction.startWorld };
+  } else if (interaction.kind === 'pending-pan') {
+    const dd = Math.hypot(e.clientX - interaction.startX, e.clientY - interaction.startY);
+    if (dd < moveThresholdPx()) return;
+    interaction.kind = 'pan';
+    canvas.classList.add('panning');
+  }
 
   if (interaction.kind === 'pan') {
     camera.tx = interaction.tx0 + (e.clientX - interaction.startX);
