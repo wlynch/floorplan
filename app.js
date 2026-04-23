@@ -570,7 +570,7 @@ function renderItems() {
       label.setAttribute('y', cy);
       label.setAttribute('class', 'item-label');
       label.setAttribute('style', `font-size:${9 / camera.scale}px`);
-      label.textContent = it.label || it.name || '';
+      label.textContent = it.name || '';
       g.appendChild(label);
     }
     if (sel) appendDimLabels(g, it);
@@ -1293,7 +1293,6 @@ function addItemFromPreset(key) {
   const it = {
     id: uid(),
     name: p.name,
-    label: p.name,
     x: snapV(center.x - p.w / 2),
     y: snapV(center.y - p.h / 2),
     w: p.w, h: p.h,
@@ -1317,7 +1316,7 @@ $('customDialog').addEventListener('close', () => {
   const r = canvas.getBoundingClientRect();
   const center = screenToWorld(r.width / 2, r.height / 2);
   const it = {
-    id: uid(), name, label: name,
+    id: uid(), name,
     x: snapV(center.x - w / 2), y: snapV(center.y - h / 2),
     w, h, rotation: 0, color: $('cColor').value,
     shape: $('cShape').value || 'rect',
