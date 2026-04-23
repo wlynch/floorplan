@@ -923,6 +923,28 @@ canvas.addEventListener('touchend', (e) => {
 function onPointerDown(e) {
   canvas.setPointerCapture(e.pointerId);
   const p = pointerWorld(e);
+  // Calibrate mode swallows clicks: 1st click marks point A, 2nd click marks
+  // point B and prompts for the real-world distance.
+  if (calibrateState && e.button === 0) {
+    if (!calibrateState.a) {
+      calibrateState.a = p;
+      showHint('Click the second reference point');
+      renderCalibrateMarkers();
+    } else {
+      const a = calibrateState.a;
+      const b = p;
+      const d = Math.hypot(b.x - a.x, b.y - a.y);
+      const answer = prompt(`Selected points are currently ${formatLen(d)} apart on the background. Enter the real-world distance between them:`);
+      if (answer != null) {
+        const target = parseLen(answer);
+        if (isFinite(target) && target > 0) applyCalibration(a, b, target);
+        else alert('Could not parse that distance.');
+      }
+      cancelCalibrate();
+    }
+    e.preventDefault();
+    return;
+  }
   // middle mouse, space-drag, or pan tool = pan
   if (e.button === 1 || (e.button === 0 && (spaceDown || tool === 'pan'))) {
     interaction = { kind: 'pan', startX: e.clientX, startY: e.clientY, tx0: camera.tx, ty0: camera.ty };
@@ -1267,7 +1289,10 @@ window.addEventListener('keydown', (e) => {
     }
     return;
   }
-  if (e.key === 'Escape') { setTool('select'); selected = null; measureStart = null; clear(measureLayer); renderAll(); return; }
+  if (e.key === 'Escape') {
+    if (calibrateState) { cancelCalibrate(); return; }
+    setTool('select'); selected = null; measureStart = null; clear(measureLayer); renderAll(); return;
+  }
 });
 window.addEventListener('keyup', (e) => {
   if (e.key === ' ') spaceDown = false;
@@ -1331,25 +1356,82 @@ $('bgUrl').addEventListener('change', () => {
 $('bgDialog').addEventListener('close', () => {
   const rv = $('bgDialog').returnValue;
   if (rv === 'cancel' || rv === '') return;
+  if (rv === 'calibrate') {
+    // Commit any edits from the dialog fields first, then enter calibrate mode.
+    commitBgFromDialog();
+    startCalibrate();
+    return;
+  }
   pushUndo();
   if (rv === 'remove') {
     state.bg = null;
   } else if (rv === 'ok') {
-    const url = $('bgUrl').value.trim();
-    if (!url) { state.bg = null; }
-    else {
-      state.bg = {
-        url,
-        x: parseLen($('bgX').value) || 0,
-        y: parseLen($('bgY').value) || 0,
-        w: Math.max(1, parseLen($('bgW').value) || 100),
-        h: Math.max(1, parseLen($('bgH').value) || 100),
-        opacity: Math.min(1, Math.max(0, parseFloat($('bgOpacity').value))) || 0.5,
-      };
-    }
+    commitBgFromDialog();
   }
   renderAll(); persist();
 });
+
+function commitBgFromDialog() {
+  const url = $('bgUrl').value.trim();
+  if (!url) { state.bg = null; return; }
+  state.bg = {
+    url,
+    x: parseLen($('bgX').value) || 0,
+    y: parseLen($('bgY').value) || 0,
+    w: Math.max(1, parseLen($('bgW').value) || 100),
+    h: Math.max(1, parseLen($('bgH').value) || 100),
+    opacity: Math.min(1, Math.max(0, parseFloat($('bgOpacity').value))) || 0.5,
+  };
+}
+
+// ---------- Background calibrate ----------
+// The user clicks two points on the background and enters the real-world
+// distance between them. The image is scaled so those two points are exactly
+// that distance apart, keeping the first point pinned to its original world
+// position (so the feature under the user's finger/cursor stays put).
+let calibrateState = null; // null | { a: null } | { a: {x,y} }
+
+function startCalibrate() {
+  if (!state.bg) return;
+  calibrateState = { a: null };
+  canvas.classList.add('tool-calibrate');
+  showHint('Click the first reference point on the background');
+  renderAll();
+}
+
+function cancelCalibrate() {
+  calibrateState = null;
+  canvas.classList.remove('tool-calibrate');
+  clear(measureLayer);
+  showHint('');
+}
+
+function renderCalibrateMarkers() {
+  clear(measureLayer);
+  if (!calibrateState || !calibrateState.a) return;
+  const dot = document.createElementNS(SVGNS, 'circle');
+  dot.setAttribute('cx', calibrateState.a.x);
+  dot.setAttribute('cy', calibrateState.a.y);
+  dot.setAttribute('r', 4 / camera.scale);
+  dot.setAttribute('fill', '#e47b2e');
+  measureLayer.appendChild(dot);
+}
+
+function applyCalibration(ptA, ptB, realDistance) {
+  const bg = state.bg;
+  if (!bg) return;
+  const d = Math.hypot(ptB.x - ptA.x, ptB.y - ptA.y);
+  if (!d) return;
+  const s = realDistance / d;
+  pushUndo();
+  // Keep ptA fixed in world coords: new position = A - s*(A - bg.xy).
+  bg.x = ptA.x - s * (ptA.x - bg.x);
+  bg.y = ptA.y - s * (ptA.y - bg.y);
+  bg.w *= s;
+  bg.h *= s;
+  renderAll();
+  persist();
+}
 for (const btn of document.querySelectorAll('.preset')) {
   btn.addEventListener('click', () => { addItemFromPreset(btn.dataset.preset); closeAddMenu(); });
 }

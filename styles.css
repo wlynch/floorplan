@@ -64,6 +64,7 @@ html, body { display: flex; flex-direction: column; }
 #canvas.tool-room { cursor: crosshair; }
 #canvas.tool-measure { cursor: crosshair; }
 #canvas.tool-pan { cursor: grab; }
+#canvas.tool-calibrate { cursor: crosshair; }
 #canvas.panning { cursor: grabbing; }
 
 .sidebar {
