@@ -92,15 +92,16 @@
     </section>
 
     <section class="panel" id="propsPanel" hidden>
+      <button id="sidebarClose" aria-label="Close properties" title="Close">×</button>
       <h3 id="propsTitle">Properties</h3>
       <label>Name <input type="text" id="fName" /></label>
       <div class="row">
-        <label>X <input type="text" id="fX" /></label>
-        <label>Y <input type="text" id="fY" /></label>
+        <label>X <input type="text" id="fX" inputmode="decimal" autocapitalize="off" /></label>
+        <label>Y <input type="text" id="fY" inputmode="decimal" autocapitalize="off" /></label>
       </div>
       <div class="row">
-        <label>Width <input type="text" id="fW" /></label>
-        <label>Height <input type="text" id="fH" /></label>
+        <label>Width <input type="text" id="fW" inputmode="decimal" autocapitalize="off" /></label>
+        <label>Height <input type="text" id="fH" inputmode="decimal" autocapitalize="off" /></label>
       </div>
       <label id="rotationRow">Rotation
         <select id="fRot">

@@ -609,7 +609,7 @@ function renderHandles() {
   const o = getSelected();
   if (!o) return;
   // handles in screen space, so zoom doesn't change their size
-  const handleSize = 8;
+  const handleSize = matchMedia('(pointer: coarse)').matches ? 22 : 8;
   const corners = [
     { name: 'nw', x: o.x,         y: o.y },
     { name: 'n',  x: o.x + o.w/2, y: o.y },
@@ -659,6 +659,7 @@ function renderSidebar() {
     const o = getSelected();
     const emptyPanel = $('emptyPanel');
     const propsPanel = $('propsPanel');
+    document.body.classList.toggle('props-open', !!o);
     if (!o) {
       emptyPanel.hidden = false;
       propsPanel.hidden = true;
@@ -746,6 +747,7 @@ function bindSidebar() {
     renderAll(); persist();
   });
   $('remove').addEventListener('click', deleteSelected);
+  $('sidebarClose').addEventListener('click', () => { selected = null; renderAll(); });
   $('planName').addEventListener('change', () => { state.name = $('planName').value; persist(); });
   $('units').addEventListener('change', () => {
     pushUndo();
@@ -796,16 +798,35 @@ canvas.addEventListener('pointerleave', onPointerUp);
 canvas.addEventListener('wheel', onWheel, { passive: false });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-// 3-finger touch pan (touchscreens). Takes over from any in-progress pointer
-// interaction and pans by the centroid delta of the touches.
+// Multi-touch gestures:
+//   2 fingers → pinch zoom at centroid (also pans with centroid)
+//   3+ fingers → pan
+// Both take over from any in-progress pointer interaction.
 let touchPan = null;
+let pinch = null;
 function touchCentroid(touches) {
   let x = 0, y = 0;
   for (const t of touches) { x += t.clientX; y += t.clientY; }
   return { x: x / touches.length, y: y / touches.length };
 }
 canvas.addEventListener('touchstart', (e) => {
-  if (e.touches.length >= 3) {
+  if (e.touches.length === 2) {
+    const [a, b] = e.touches;
+    const r = canvas.getBoundingClientRect();
+    const cx = (a.clientX + b.clientX) / 2 - r.left;
+    const cy = (a.clientY + b.clientY) / 2 - r.top;
+    const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    pinch = {
+      dist0: dist,
+      scale0: camera.scale,
+      wp: screenToWorld(cx, cy),
+    };
+    interaction = null;
+    clearSnapGuides();
+    canvas.classList.remove('panning');
+    e.preventDefault();
+  } else if (e.touches.length >= 3) {
+    pinch = null;
     const c = touchCentroid(e.touches);
     touchPan = { cx: c.x, cy: c.y, tx0: camera.tx, ty0: camera.ty };
     interaction = null;
@@ -814,6 +835,21 @@ canvas.addEventListener('touchstart', (e) => {
   }
 }, { passive: false });
 canvas.addEventListener('touchmove', (e) => {
+  if (pinch && e.touches.length === 2) {
+    const [a, b] = e.touches;
+    const r = canvas.getBoundingClientRect();
+    const cx = (a.clientX + b.clientX) / 2 - r.left;
+    const cy = (a.clientY + b.clientY) / 2 - r.top;
+    const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    camera.scale = Math.min(40, Math.max(0.5, pinch.scale0 * (dist / pinch.dist0)));
+    // Keep the world point under the initial centroid pinned under the current centroid
+    camera.tx = cx - pinch.wp.x * camera.scale;
+    camera.ty = cy - pinch.wp.y * camera.scale;
+    applyCamera();
+    renderHandles();
+    e.preventDefault();
+    return;
+  }
   if (touchPan && e.touches.length >= 3) {
     const c = touchCentroid(e.touches);
     camera.tx = touchPan.tx0 + (c.x - touchPan.cx);
@@ -823,8 +859,9 @@ canvas.addEventListener('touchmove', (e) => {
     e.preventDefault();
   }
 }, { passive: false });
-canvas.addEventListener('touchend', () => {
-  if (touchPan) {
+canvas.addEventListener('touchend', (e) => {
+  if (pinch && e.touches.length < 2) pinch = null;
+  if (touchPan && e.touches.length < 3) {
     touchPan = null;
     canvas.classList.remove('panning');
   }
